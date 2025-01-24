@@ -25,7 +25,7 @@ fn styles() -> Styles {
 
 /// Command-line argument schema
 #[derive(Debug, Parser)]
-#[command(version, about = "Rename files and directories to fit length limits.\n\nPreserve secondary extensions up to N characters (default: 6) using --secondary-ext-len. Set to 0 to disable extension preservation.", long_about = None, styles = styles())]
+#[command(version, about = "Rename files and directories to fit length limits.\n\nBy default, secondary extensions are preserved up to 6 characters; allowable length is adjustable using the -s argument.\n\nSet \"-s 0\" to disable secondary extension preservation.", long_about = None, styles = styles())]
 struct CliArgs {
     /// Paths to rename (recursively, if directories)
     #[arg(required = true)]
