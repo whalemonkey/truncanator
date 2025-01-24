@@ -1,0 +1,44 @@
+# This is an example ".prompt" file
+# It is used to define and reuse prompts within Continue
+# Each .prompt file can be accessed by typing "@prompts" in the Chat input
+
+# A prompt file consists of two parts:
+# 1. Everything above the "---" is YAML. Here you can set "temperature", "description", and other options
+# 2. Everything below the "---" is the prompt body
+
+# If you do not want to set any options, you do not need to include the "---"
+
+# In the body, you can reference:
+# 1. Files, using either absolute or relative paths (based on the workspace root)
+  # @README.md
+  # @src/test/test.py
+  # @/Users/me/Desktop/my-project/src/test/test.py
+# 2. URLs, for example
+  # @https://example.com
+# 3. Context providers, for example
+  # @currentFile
+  # @os
+  # @repo-map
+
+# To learn more, see the full .prompt file reference: https://docs.continue.dev/features/prompt-files
+name: Main Prompt
+description: Main prompt file with rules for preserving the rules of filename truncation.
+---
+
+Whenever you make changes to the code, especially make sure that the following rules of filename truncation are preserved:
+
+```
+
+- The primary file extension (the rightmost period and the text following after) are NEVER truncated, ALWAYS preserved.
+
+- If `secondary_ext_len` is non-zero, and there is more than one period in the full filename: get ONLY the second-to-rightmost period and the text between the two rightmost periods and consider if that text's length is longer than or equal to the number set in the `secondary_ext_len` setting. If so, these characters are not a "secondary extension" and are instead part of the stem. If not, these characters are to be considered the "secondary extension" and are to be preserved during truncation.
+
+- RStem definition: If there is no secondary extension in the filename, the "RStem" is all of the characters to the left of the file extension. If there is a secondary extension, the "RStem" is all of the characters to the left of the secondary extension. 
+
+- Consider files that have the same initial RStem, and are in the same directory, to be in the same "group". If truncation of one filename within an RStem group is necessary, then all of them must have characters deleted from the rightmost side of their RStem, until the longest in the group meets the length specified in the `--max-len` argument. If truncation is working correctly, All files in the same group should have the same RStem after truncation, with any primary or secondary file extensions preserved.
+
+- When trimming characters off the RStem, the program should remove characters only to the point where the full filename fits within limit of `--max-len`, the specified number of bytes. Trimming should ignore word boundaries by default, and try to respect word boundaries if the `-w` or `--word-boundaries` argument is passed.
+
+- Directories can be truncated independent of filename rules, but you must follow the rule that truncation only deletes characters from the right to fit the length requirements.
+
+```
