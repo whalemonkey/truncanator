@@ -28,6 +28,7 @@ fn styles() -> Styles {
 #[command(version, about = "Rename files and directories to fit length limits.\n\nPreserve secondary extensions up to N characters (default: 6) using --secondary-ext-len. Set to 0 to disable extension preservation.", long_about = None, styles = styles())]
 struct CliArgs {
     /// Paths to rename (recursively, if directories)
+    #[arg(required = true)]
     path: Vec<PathBuf>,
 
     /// Length to truncate to. (Default chosen for rclone name encryption)
@@ -38,7 +39,9 @@ struct CliArgs {
     #[arg(short = 'n', long, action, default_value_t = false)]
     dry_run: bool,
 
-    /// Maximum length to preserve for secondary extensions (e.g. 3 for ".tar" in ".tar.gz"). Set to 0 to disable.
+    /// Maximum length to preserve for secondary extensions
+    /// (e.g. 3 for ".tar" in ".tar.gz").
+    /// Set to 0 to disable.
     #[arg(short = 's', long, default_value_t = 6, value_name = "LEN")]
     secondary_ext_len: usize,
 
