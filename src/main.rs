@@ -5,7 +5,7 @@
 
 use std::borrow::Cow;
 use std::error::Error;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -50,10 +50,13 @@ struct CliArgs {
     word_boundaries: bool,
 }
 
-fn split_stem_ext(name: &str) -> (&str, Option<&str>) {
-    if let Some((stem, ext)) = name.rsplit_once('.') {
-        // Only consider it an extension if it's at the end and has no slashes
-        if !ext.contains('/') && !ext.contains('\\') {
+fn split_stem_ext(name: &OsStr) -> (&OsStr, Option<&OsStr>) {
+    let bytes = name.as_bytes();
+    if let Some(last_dot) = bytes.iter().rposition(|&b| b == b'.') {
+        // Only consider extension if no path separators in stem
+        if !bytes[..last_dot].contains(&b'/') && !bytes[..last_dot].contains(&b'\\') {
+            let stem = OsStr::from_bytes(&bytes[..last_dot]);
+            let ext = OsStr::from_bytes(&bytes[last_dot + 1..]);
             (stem, Some(ext))
         } else {
             (name, None)
@@ -63,23 +66,29 @@ fn split_stem_ext(name: &str) -> (&str, Option<&str>) {
     }
 }
 
-fn split_rstem_ext(name: &str, secondary_ext_len: usize) -> (String, Option<String>, Option<String>) {
+fn split_rstem_ext(name: &OsStr, secondary_ext_len: usize) -> (OsString, Option<OsString>, Option<OsString>) {
     let (stem, primary_ext) = split_stem_ext(name);
     
-    let primary_ext = primary_ext.map(|s| s.to_string());
-    
     if secondary_ext_len == 0 {
-        return (stem.to_string(), None, primary_ext);
+        return (stem.to_os_string(), None, primary_ext.map(|s| s.to_os_string()));
     }
-    
-    // Check for valid secondary extension
-    if let Some((r_stem, se)) = stem.rsplit_once('.') {
-        if se.len() <= secondary_ext_len {
-            return (r_stem.to_string(), Some(se.to_string()), primary_ext);
+
+    let stem_bytes = stem.as_bytes();
+    if let Some(second_dot) = stem_bytes.iter().rposition(|&b| b == b'.') {
+        let ext_part = &stem_bytes[second_dot + 1..];
+        
+        if ext_part.len() <= secondary_ext_len {
+            let rstem = OsStr::from_bytes(&stem_bytes[..second_dot]);
+            let secondary_ext = OsStr::from_bytes(ext_part);
+            return (
+                rstem.to_os_string(),
+                Some(secondary_ext.to_os_string()),
+                primary_ext.map(|s| s.to_os_string())
+            );
         }
     }
-    
-    (stem.to_string(), None, primary_ext)
+
+    (stem.to_os_string(), None, primary_ext.map(|s| s.to_os_string()))
 }
 
 /// Figure out the new name when truncating a path
@@ -99,31 +108,27 @@ fn trunc_path(
 
     // Handle directories first with simpler truncation
     if is_dir {
-        let name_str = fname.to_string_lossy();
-        let (stem, _) = split_stem_ext(&name_str);
-        
+        let (stem, _) = split_stem_ext(fname);
         let stem_bytes = stem.as_bytes();
         let max_stem_bytes = max_len;
         let mut truncated_bytes = &stem_bytes[..stem_bytes.len().min(max_stem_bytes)];
-
-        // Preserve UTF-8 validity
+        
+        // Add UTF-8 boundary check for directories
         while !std::str::from_utf8(truncated_bytes).is_ok() {
-            truncated_bytes = &truncated_bytes[..truncated_bytes.len()-1];
+            truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
         }
-
-        let mut truncated = String::from_utf8(truncated_bytes.to_vec())
-            .unwrap_or_else(|_| String::new());
-
+            let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
 
         // Preserve whole words where possible
         if word_boundaries {
-            if let Some(last_space) = truncated.rfind(' ') {
-                let space_bytes = truncated[..last_space].as_bytes().len();
-                if space_bytes > max_stem_bytes.saturating_sub(10) {
-                    truncated.truncate(last_space);
+            let truncated_str = truncated.to_string_lossy();
+                if let Some(last_space) = truncated_str.rfind(' ') {
+                    let space_bytes = truncated_str[..last_space].as_bytes().len();
+                    if space_bytes > max_stem_bytes.saturating_sub(10) {
+                        truncated = OsString::from(&truncated_str[..last_space]);
+                    }
                 }
             }
-        }
 
         let parent = path.parent().unwrap_or_else(|| Path::new(""));
         let new_path = parent.join(truncated);
@@ -176,7 +181,7 @@ fn trunc_path(
 
             let mut truncated_stem = String::from_utf8(truncated_bytes.to_vec())
                 .unwrap_or_else(|_| String::new());
-            
+
             // Preserve whole words where possible
             if word_boundaries {
                 if let Some(last_space) = truncated_stem.rfind(' ') {
@@ -205,22 +210,22 @@ fn trunc_path(
     }
 
     let new_fname_len = if std::str::from_utf8(raw).is_ok() {
-        // if it's UTF-8-able, then truncate and let the UTF-8 parser figure out where to split
         match std::str::from_utf8(raw_trunc) {
             Ok(_) => raw_trunc.len(),
             Err(e) => e.valid_up_to(),
         }
     } else {
-        // For now, just let stuff that's already invalid UTF-8 end in a chopped code point
-        //
-        // TODO: Implement properly
-        raw_trunc.len()
+        let mut valid_len = raw_trunc.len();
+        while valid_len > 0 && std::str::from_utf8(&raw_trunc[..valid_len]).is_err() {
+            valid_len -= 1;
+        }
+        valid_len
     };
 
     let path_raw = path.as_os_str().as_bytes();
     let mut new_len = path_raw.len() - (raw.len() - new_fname_len);
     if let Some(ext) = path.extension() {
-        new_len = new_len.saturating_sub(ext.len()).saturating_sub(1); // for the dot
+        new_len = new_len.saturating_sub(ext.len()).saturating_sub(1);
     }
 
     let new_result = path.as_os_str().as_bytes().get(..new_len).expect("truncate within len");
@@ -240,23 +245,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // First pass: Collect files by RStem and parent directory
         for entry in WalkDir::new(&root).contents_first(true) {
-            // Convert path to owned PathBuf immediately to avoid lifetime issues
             let path = entry.as_ref()
                 .map(|e| e.path().to_path_buf())
                 .unwrap_or_else(|_| PathBuf::new());
-
             if path.is_dir() {
                 continue;
             }
 
             let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
             let fname = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string(); // Convert to owned String early
+                .map(|n| n.to_os_string())
+                .unwrap_or_else(|| OsString::new());
 
-            // Split into components using the rules
-            let (r_stem, secondary_ext, primary_ext) = split_rstem_ext(&fname, args.secondary_ext_len);
+            let (r_stem, secondary_ext, primary_ext) = split_rstem_ext(
+                &fname,
+                args.secondary_ext_len
+            );
 
             file_groups.entry((parent, r_stem))
                 .or_insert_with(Vec::new)
@@ -265,50 +269,42 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         // Second pass: Process RStem groups
         for ((parent_dir, r_stem), files) in file_groups {
-            // Calculate max stem length in BYTES for group
             let mut max_stem_bytes = usize::MAX;
             for (_, se, pe) in &files {
-                // Calculate extension length in BYTES (including dots)
                 let ext_bytes = pe.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0) +
                                 se.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0);
 
                 max_stem_bytes = max_stem_bytes.min(args.max_len.saturating_sub(ext_bytes));
             }
 
-            // Truncate RStem to byte length (preserving UTF-8)
             let r_stem_bytes = r_stem.as_bytes();
             let mut truncated_bytes = &r_stem_bytes[..r_stem_bytes.len().min(max_stem_bytes)];
 
-            // Find last valid UTF-8 boundary
             while !std::str::from_utf8(truncated_bytes).is_ok() {
                 truncated_bytes = &truncated_bytes[..truncated_bytes.len()-1];
             }
             
-            let mut truncated = String::from_utf8(truncated_bytes.to_vec())
-                .unwrap_or_else(|_| String::new());
+            let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
 
-            // Update whole word preservation to use byte indices
+            let truncated_str = truncated.to_string_lossy();
             if args.word_boundaries {
-                if let Some(last_space) = truncated.rfind(' ') {
-                    let space_bytes = truncated[..last_space].as_bytes().len();
+                if let Some(last_space) = truncated_str.rfind(' ') {
+                    let space_bytes = truncated_str[..last_space].as_bytes().len();
                     if space_bytes > max_stem_bytes.saturating_sub(10) {
-                        truncated.truncate(last_space);
+                        truncated = OsString::from(&truncated_str[..last_space]);
                     }
                 }
             }
 
-            // Process all files in group
             for (path, se, pe) in files {
-                let mut new_name = truncated.clone();
-
-                // Rebuild extensions
+                let mut new_name = OsString::from(&truncated);
                 if let Some(se) = se {
-                    new_name.push('.');
-                    new_name.push_str(&se);
+                    new_name.push(".");
+                    new_name.push(se);
                 }
                 if let Some(pe) = pe {
-                    new_name.push('.');
-                    new_name.push_str(&pe);
+                    new_name.push(".");
+                    new_name.push(pe);
                 }
 
                 let new_path = parent_dir.join(&new_name);
@@ -326,9 +322,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = entry?.into_path();
             if path.is_dir() {
                 let new_path = trunc_path(
-                    &path, 
-                    args.max_len, 
-                    args.secondary_ext_len, 
+                    &path,
+                    args.max_len,
+                    args.secondary_ext_len,
                     args.word_boundaries
                 )?;
                 if new_path != path {
@@ -339,8 +335,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     );
                     if !args.dry_run {
                         std::fs::rename(&path, &new_path)?;
-                    }
-                }
+    }
+}
             }
         }
     }

@@ -22,7 +22,7 @@
 
 # To learn more, see the full .prompt file reference: https://docs.continue.dev/features/prompt-files
 name: Main Prompt
-description: Main prompt file with rules for preserving the rules of filename truncation.
+description: Main prompt file for preserving the rules of filename truncation.
 ---
 
 Whenever you make changes to the code, especially make sure that the following rules of filename truncation are preserved:
@@ -39,6 +39,10 @@ Whenever you make changes to the code, especially make sure that the following r
 
 - When trimming characters off the RStem, the program should remove characters only to the point where the full filename fits within limit of `--max-len`, the specified number of bytes. Trimming should ignore word boundaries by default, and try to respect word boundaries if the `-w` or `--word-boundaries` argument is passed.
 
+- When truncating any part of the filename (RStem or directory names), ensure the truncation occurs at valid UTF-8 code point boundaries, even if the original filename contains invalid UTF-8 bytes. This is done by progressively shortening the byte sequence until a valid UTF-8 string is achieved, preventing partial code points in truncated names.
+
 - Directories can be truncated independent of filename rules, but you must follow the rule that truncation only deletes characters from the right to fit the length requirements.
 
 ```
+
+Additionally, please format any code replacements in a way that makes them easy to embed within the code, such as having comments or explanations that denote the surrounding code and relative positioning where the code should be inserted, or showing lines above or below the code you are replacing.
