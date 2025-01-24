@@ -108,8 +108,7 @@ fn trunc_path(
 
     // Handle directories first with simpler truncation
     if is_dir {
-        let (stem, _) = split_stem_ext(fname);
-        let stem_bytes = stem.as_bytes();
+        let stem_bytes = fname.as_bytes();
         let max_stem_bytes = max_len;
         let mut truncated_bytes = &stem_bytes[..stem_bytes.len().min(max_stem_bytes)];
         
@@ -343,4 +342,3 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-
