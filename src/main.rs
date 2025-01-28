@@ -280,7 +280,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut truncated_bytes = &r_stem_bytes[..r_stem_bytes.len().min(max_stem_bytes)];
 
             while !std::str::from_utf8(truncated_bytes).is_ok() {
-                truncated_bytes = &truncated_bytes[..truncated_bytes.len()-1];
+                truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
             }
             
             let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
@@ -304,6 +304,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if let Some(pe) = pe {
                     new_name.push(".");
                     new_name.push(pe);
+                }
+
+                // Check if the new name exceeds max_len
+                let new_name_len = new_name.as_os_str().as_bytes().len();
+                if new_name_len > args.max_len {
+                    eprintln!(
+                        "Warning: Skipping '{}' as truncated name length ({}) exceeds max_len ({}).",
+                        path.display(),
+                        new_name_len,
+                        args.max_len
+                    );
+                    continue;
                 }
 
                 let new_path = parent_dir.join(&new_name);
