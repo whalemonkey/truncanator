@@ -3,6 +3,9 @@
 //! By default, preserves secondary extensions up to 6 characters each (e.g., .tar in .tar.gz).
 //! Use --secondary-ext-len=0 to disable extension preservation.
 
+#[cfg(test)]
+mod tests;
+
 use std::borrow::Cow;
 use std::error::Error;
 use std::ffi::{OsStr, OsString};
@@ -24,33 +27,34 @@ fn styles() -> Styles {
 }
 
 /// Command-line argument schema
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(version, about = "Rename files and directories to fit length limits.\n\nBy default, secondary extensions are preserved up to 6 characters; allowable length is adjustable using the -s argument.\n\nSet \"-s 0\" to disable secondary extension preservation.", long_about = None, styles = styles())]
-struct CliArgs {
+#[derive(Debug)]
+pub struct CliArgs {
     /// Paths to rename (recursively, if directories)
     #[arg(required = true)]
-    path: Vec<PathBuf>,
+    pub path: Vec<PathBuf>,
 
     /// Length to truncate to. (Default chosen for rclone name encryption)
     #[arg(long, default_value_t = 140)]
-    max_len: usize,
+    pub max_len: usize,
 
     /// Don't actually rename files. Just print.
     #[arg(short = 'n', long, action, default_value_t = false)]
-    dry_run: bool,
+    pub dry_run: bool,
 
     /// Maximum length to preserve for secondary extensions
     /// (e.g. 3 for ".tar" in ".tar.gz").
     /// Set to 0 to disable.
     #[arg(short = 's', long, default_value_t = 6, value_name = "LEN")]
-    secondary_ext_len: usize,
+    pub secondary_ext_len: usize,
 
     /// Respect word boundaries when truncating
     #[arg(short = 'w', long, action, default_value_t = false)]
-    word_boundaries: bool,
+    pub word_boundaries: bool,
 }
 
-fn split_stem_ext(name: &OsStr) -> (&OsStr, Option<&OsStr>) {
+pub fn split_stem_ext(name: &OsStr) -> (&OsStr, Option<&OsStr>) {
     let bytes = name.as_bytes();
     if let Some(last_dot) = bytes.iter().rposition(|&b| b == b'.') {
         // Only consider extension if no path separators in stem
@@ -66,7 +70,7 @@ fn split_stem_ext(name: &OsStr) -> (&OsStr, Option<&OsStr>) {
     }
 }
 
-fn split_rstem_ext(name: &OsStr, secondary_ext_len: usize) -> (OsString, Option<OsString>, Option<OsString>) {
+pub fn split_rstem_ext(name: &OsStr, secondary_ext_len: usize) -> (OsString, Option<OsString>, Option<OsString>) {
     let (stem, primary_ext) = split_stem_ext(name);
     
     if secondary_ext_len == 0 {
@@ -94,7 +98,7 @@ fn split_rstem_ext(name: &OsStr, secondary_ext_len: usize) -> (OsString, Option<
 /// Figure out the new name when truncating a path
 ///
 /// **NOTE:** Handling of non-UTF8-able path is currently hacky
-fn trunc_path(
+pub fn trunc_path(
     path: &Path,
     max_len: usize,
     secondary_ext_len: usize,
@@ -238,12 +242,17 @@ fn trunc_path(
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = CliArgs::parse();
+    process_files(&args)?;
+    process_directories(&args)?;
+    Ok(())
+}
 
-    for root in args.path {
-        let mut file_groups = std::collections::HashMap::new();
+pub fn process_files(args: &CliArgs) -> Result<(), Box<dyn Error>> {
+    let mut file_groups = std::collections::HashMap::new();
 
-        // First pass: Collect files by RStem and parent directory
-        for entry in WalkDir::new(&root).contents_first(true) {
+    // First pass: Collect files by RStem and parent directory
+    for path in &args.path {
+        for entry in WalkDir::new(path).contents_first(true) {
             let path = entry.as_ref()
                 .map(|e| e.path().to_path_buf())
                 .unwrap_or_else(|_| PathBuf::new());
@@ -265,71 +274,42 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .or_insert_with(Vec::new)
                 .push((path, secondary_ext, primary_ext));
         }
+    }
 
-        // Second pass: Process RStem groups
-        for ((parent_dir, r_stem), files) in file_groups {
-            let mut max_stem_bytes = usize::MAX;
-            for (_, se, pe) in &files {
-                let ext_bytes = pe.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0) +
-                                se.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0);
+    // Second pass: Process RStem groups
+    for ((parent_dir, r_stem), files) in file_groups {
+        let files_slice = files.as_slice();
+        let max_stem_bytes = calculate_max_stem_bytes(files_slice, args.max_len);
+        let truncated = truncate_stem(r_stem, max_stem_bytes, args.word_boundaries);
 
-                max_stem_bytes = max_stem_bytes.min(args.max_len.saturating_sub(ext_bytes));
+        for (path, se, pe) in files {
+            let new_name = build_new_name(truncated.clone(), se, pe);
+            if new_name.len() > args.max_len {
+                eprintln!(
+                    "Warning: Skipping '{}' as truncated name length ({}) exceeds max_len ({}).",
+                    path.display(),
+                    new_name.len(),
+                    args.max_len
+                );
+                continue;
             }
 
-            let r_stem_bytes = r_stem.as_bytes();
-            let mut truncated_bytes = &r_stem_bytes[..r_stem_bytes.len().min(max_stem_bytes)];
-
-            while !std::str::from_utf8(truncated_bytes).is_ok() {
-                truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
-            }
-            
-            let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
-
-            let truncated_str = truncated.to_string_lossy();
-            if args.word_boundaries {
-                if let Some(last_space) = truncated_str.rfind(' ') {
-                    let space_bytes = truncated_str[..last_space].as_bytes().len();
-                    if space_bytes > max_stem_bytes.saturating_sub(10) {
-                        truncated = OsString::from(&truncated_str[..last_space]);
-                    }
-                }
-            }
-
-            for (path, se, pe) in files {
-                let mut new_name = OsString::from(&truncated);
-                if let Some(se) = se {
-                    new_name.push(".");
-                    new_name.push(se);
-                }
-                if let Some(pe) = pe {
-                    new_name.push(".");
-                    new_name.push(pe);
-                }
-
-                // Check if the new name exceeds max_len
-                let new_name_len = new_name.as_os_str().as_bytes().len();
-                if new_name_len > args.max_len {
-                    eprintln!(
-                        "Warning: Skipping '{}' as truncated name length ({}) exceeds max_len ({}).",
-                        path.display(),
-                        new_name_len,
-                        args.max_len
-                    );
-                    continue;
-                }
-
-                let new_path = parent_dir.join(&new_name);
-                if new_path != path {
-                    println!("Renaming: {:?} → {:?}", path.file_name().unwrap(), new_name);
-                    if !args.dry_run {
-                        std::fs::rename(&path, &new_path)?;
-                    }
+            let new_path = parent_dir.join(&new_name);
+            if new_path != path {
+                println!("Renaming: {:?} → {:?}", path.file_name().unwrap(), new_name);
+                if !args.dry_run {
+                    std::fs::rename(&path, &new_path)?;
                 }
             }
         }
+    }
 
-        // Process directories separately after files
-        for entry in WalkDir::new(root).contents_first(true) {
+    Ok(())
+}
+
+pub fn process_directories(args: &CliArgs) -> Result<(), Box<dyn Error>> {
+    for path in &args.path {
+        for entry in WalkDir::new(path).contents_first(true) {
             let path = entry?.into_path();
             if path.is_dir() {
                 let new_path = trunc_path(
@@ -346,11 +326,57 @@ fn main() -> Result<(), Box<dyn Error>> {
                     );
                     if !args.dry_run {
                         std::fs::rename(&path, &new_path)?;
+                    }
+                }
+            }
+        }
     }
+    Ok(())
 }
+
+pub fn calculate_max_stem_bytes(files: &[(PathBuf, Option<OsString>, Option<OsString>)], max_len: usize) -> usize {
+    let mut max_stem_bytes = usize::MAX;
+    for (_, se, pe) in files {
+        let ext_bytes = pe.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0) +
+                        se.as_ref().map(|e| e.as_bytes().len() + 1).unwrap_or(0);
+        max_stem_bytes = max_stem_bytes.min(max_len.saturating_sub(ext_bytes));
+    }
+    max_stem_bytes
+}
+
+pub fn truncate_stem(r_stem: OsString, max_stem_bytes: usize, word_boundaries: bool) -> OsString {
+    let r_stem_bytes = r_stem.as_bytes();
+    let mut truncated_bytes = &r_stem_bytes[..r_stem_bytes.len().min(max_stem_bytes)];
+
+    while !std::str::from_utf8(truncated_bytes).is_ok() {
+        truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
+    }
+
+    let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
+
+    if word_boundaries {
+        let truncated_str = truncated.to_string_lossy();
+        if let Some(last_space) = truncated_str.rfind(' ') {
+            let space_bytes = truncated_str[..last_space].as_bytes().len();
+            if space_bytes > max_stem_bytes.saturating_sub(10) {
+                truncated = OsString::from(&truncated_str[..last_space]);
             }
         }
     }
 
-    Ok(())
+    truncated
 }
+
+pub fn build_new_name(truncated: OsString, secondary_ext: Option<OsString>, primary_ext: Option<OsString>) -> OsString {
+    let mut new_name = truncated;
+    if let Some(se) = secondary_ext {
+        new_name.push(".");
+        new_name.push(se);
+    }
+    if let Some(pe) = primary_ext {
+        new_name.push(".");
+        new_name.push(pe);
+    }
+    new_name
+}
+

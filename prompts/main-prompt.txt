@@ -1,4 +1,4 @@
-Whenever you make changes to the code, especially make sure that the following rules of filename truncation are preserved:
+`Whenever you make changes to the code, especially make sure that the following rules of filename truncation are preserved:
 
 ```
 
