@@ -9,9 +9,7 @@ pub struct TestDir {
 
 impl TestDir {
     pub fn new() -> Self {
-        TestDir {
-            dir: TempDir::new().expect("Failed to create temp directory"),
-        }
+        TestDir { dir: TempDir::new().expect("Failed to create temp directory") }
     }
 
     pub fn create_file(&self, name: &str, content: &str) -> PathBuf {
@@ -34,17 +32,16 @@ impl TestDir {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        split_rstem_ext,
-        trunc_path,
-        CliArgs,
-        process_files,
-        process_directories,
-    };
+    use crate::{process_directories, process_files, split_rstem_ext, trunc_path, CliArgs};
     use std::ffi::OsStr;
 
     /// Helper function to create test args
-    fn test_args(path: PathBuf, max_len: usize, sec_ext_len: usize, word_boundaries: bool) -> CliArgs {
+    fn test_args(
+        path: PathBuf,
+        max_len: usize,
+        sec_ext_len: usize,
+        word_boundaries: bool,
+    ) -> CliArgs {
         CliArgs {
             path: vec![path],
             max_len,
@@ -66,16 +63,11 @@ mod tests {
 
         for (input, max_len, expected) in test_cases {
             let path = test_dir.create_file(input, "content");
-            let result = trunc_path(&path, max_len, 6, false)
-                .expect("Truncation failed");
+            let result = trunc_path(&path, max_len, 6, false).expect("Truncation failed");
             let result_str = result.to_str().unwrap();
             let result_ext = result_str.rsplit('.').next().unwrap();
             let expected_ext = expected.rsplit('.').next().unwrap();
-            assert_eq!(
-                result_ext,
-                expected_ext,
-                "Primary extension must be preserved"
-            );
+            assert_eq!(result_ext, expected_ext, "Primary extension must be preserved");
         }
     }
 
@@ -96,7 +88,7 @@ mod tests {
             let stem_str = stem.to_string_lossy().into_owned();
             let sec_ext_str = sec_ext.as_ref().map(|e| e.to_string_lossy().into_owned());
             let pri_ext_str = pri_ext.as_ref().map(|e| e.to_string_lossy().into_owned());
-            
+
             assert_eq!(stem_str, exp_stem);
             assert_eq!(sec_ext_str.as_deref(), exp_sec);
             assert_eq!(pri_ext_str.as_deref(), exp_pri);
@@ -107,37 +99,24 @@ mod tests {
     fn test_rstem_group_consistency() {
         // Rule: Files with same initial RStem in same directory must have same final RStem length
         let test_dir = TestDir::new();
-        
+
         // Create files in same group with different extensions
         test_dir.create_file("document.txt", "content");
         test_dir.create_file("document.tar.gz", "content");
         test_dir.create_file("document.config", "content");
-        
-        let args = test_args(
-            test_dir.path().to_path_buf(),
-            12,
-            6,
-            false
-        );
+
+        let args = test_args(test_dir.path().to_path_buf(), 12, 6, false);
 
         process_files(&args).expect("File processing failed");
 
-        let files: Vec<_> = fs::read_dir(test_dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
+        let files: Vec<_> =
+            fs::read_dir(test_dir.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
 
-        let rstems: Vec<_> = files.iter()
-            .map(|f| split_rstem_ext(f.as_ref(), 6).0)
-            .collect();
+        let rstems: Vec<_> = files.iter().map(|f| split_rstem_ext(f.as_ref(), 6).0).collect();
 
         let first_len = rstems[0].len();
         for rstem in rstems.iter().skip(1) {
-            assert_eq!(
-                rstem.len(),
-                first_len,
-                "All files in group must have same RStem length"
-            );
+            assert_eq!(rstem.len(), first_len, "All files in group must have same RStem length");
         }
     }
 
@@ -156,16 +135,13 @@ mod tests {
 
         for (input, max_len, expected, word_boundaries) in test_cases {
             let path = test_dir.create_file(input, "content");
-            let result = trunc_path(&path, max_len, 6, word_boundaries)
-                .expect("Truncation failed");
-            let result_str = result.file_name()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string();
-            assert_eq!(result_str, expected,
+            let result = trunc_path(&path, max_len, 6, word_boundaries).expect("Truncation failed");
+            let result_str = result.file_name().unwrap().to_str().unwrap().to_string();
+            assert_eq!(
+                result_str, expected,
                 "Word boundary truncation failed for '{}' with max_len={}",
-                input, max_len);
+                input, max_len
+            );
         }
     }
 
@@ -174,21 +150,16 @@ mod tests {
         // Rule: Truncation must occur at valid UTF-8 boundaries
         let test_dir = TestDir::new();
         let test_cases = vec![
-            ("日本語.txt", 8, true),  // Valid truncation
-            ("🌟star.txt", 7, true),  // Emoji handling
+            ("日本語.txt", 8, true), // Valid truncation
+            ("🌟star.txt", 7, true), // Emoji handling
             ("αβγ.txt", 5, true),    // Greek letters
         ];
 
         for (input, max_len, should_be_valid) in test_cases {
             let path = test_dir.create_file(input, "content");
-            let result = trunc_path(&path, max_len, 6, false)
-                .expect("Truncation failed");
-            
-            assert_eq!(
-                result.to_str().is_some(),
-                should_be_valid,
-                "Result must be valid UTF-8"
-            );
+            let result = trunc_path(&path, max_len, 6, false).expect("Truncation failed");
+
+            assert_eq!(result.to_str().is_some(), should_be_valid, "Result must be valid UTF-8");
         }
     }
 
@@ -208,11 +179,7 @@ mod tests {
 
             process_directories(&args).expect("Directory processing failed");
             let new_path = dir_path.parent().unwrap().join(expected);
-            assert!(
-                new_path.exists(),
-                "Directory should be truncated to '{}'",
-                expected
-            );
+            assert!(new_path.exists(), "Directory should be truncated to '{}'", expected);
         }
     }
 
@@ -221,10 +188,10 @@ mod tests {
         // Rule: Skip files where extensions + minimum RStem exceed max_len
         let test_dir = TestDir::new();
         // Test case where extensions alone exceed max_len
-        let filename = "test.tar.gz";  // .tar.gz is 7 bytes
+        let filename = "test.tar.gz"; // .tar.gz is 7 bytes
         let path = test_dir.create_file(filename, "content");
 
-        let args = test_args(path.clone(), 6, 6, false);  // max_len less than extensions
+        let args = test_args(path.clone(), 6, 6, false); // max_len less than extensions
 
         process_files(&args).expect("Processing should succeed");
 
@@ -237,10 +204,10 @@ mod tests {
         );
 
         // Test case where minimum stem + extensions exceed max_len
-        let filename2 = "doc.tar.gz";  // 3 + 7 = 10 bytes minimum
+        let filename2 = "doc.tar.gz"; // 3 + 7 = 10 bytes minimum
         let path2 = test_dir.create_file(filename2, "content");
 
-        let args2 = test_args(path2.clone(), 8, 6, false);  // max_len less than minimum possible
+        let args2 = test_args(path2.clone(), 8, 6, false); // max_len less than minimum possible
 
         process_files(&args2).expect("Processing should succeed");
 
