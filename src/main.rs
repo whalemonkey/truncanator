@@ -120,7 +120,7 @@ pub fn trunc_path(
         let mut truncated_bytes = &stem_bytes[..stem_bytes.len().min(max_stem_bytes)];
 
         // Add UTF-8 boundary check for directories
-        while !std::str::from_utf8(truncated_bytes).is_ok() {
+        while std::str::from_utf8(truncated_bytes).is_err() {
             truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
         }
         let mut truncated = OsStr::from_bytes(truncated_bytes).to_os_string();
@@ -129,7 +129,7 @@ pub fn trunc_path(
         if word_boundaries {
             let truncated_str = truncated.to_string_lossy();
             if let Some(last_space) = truncated_str.rfind(' ') {
-                let space_bytes = truncated_str[..last_space].as_bytes().len();
+                let space_bytes = truncated_str[..last_space].len();
                 if space_bytes > max_stem_bytes.saturating_sub(10) {
                     truncated = OsString::from(&truncated_str[..last_space]);
                 }
@@ -170,8 +170,8 @@ pub fn trunc_path(
             };
 
             // Calculate total length needed for extensions in BYTES
-            let ext_bytes = main_ext.as_bytes().len() + 1 +  // main extension + dot
-                secondary_ext.map(|se| se.as_bytes().len() + 1).unwrap_or(0); // secondary extension + dot
+            let ext_bytes = main_ext.len() + 1 +  // main extension + dot
+                secondary_ext.map(|se| se.len() + 1).unwrap_or(0); // secondary extension + dot
 
             // Calculate available space for stem
             let max_stem_bytes = max_len.saturating_sub(ext_bytes);
@@ -181,7 +181,7 @@ pub fn trunc_path(
             let mut truncated_bytes = &stem_bytes[..stem_bytes.len().min(max_stem_bytes)];
 
             // Preserve UTF-8 validity
-            while !std::str::from_utf8(truncated_bytes).is_ok() {
+            while std::str::from_utf8(truncated_bytes).is_err() {
                 truncated_bytes = &truncated_bytes[..truncated_bytes.len() - 1];
             }
 
@@ -191,7 +191,7 @@ pub fn trunc_path(
             // Preserve whole words where possible
             if word_boundaries {
                 if let Some(last_space) = truncated_stem.rfind(' ') {
-                    let space_bytes = truncated_stem[..last_space].as_bytes().len();
+                    let space_bytes = truncated_stem[..last_space].len();
                     if space_bytes > max_stem_bytes.saturating_sub(10) {
                         truncated_stem.truncate(last_space);
                     }
@@ -263,8 +263,7 @@ pub fn process_files(args: &CliArgs) -> Result<(), Box<dyn Error>> {
             }
 
             let parent = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-            let fname =
-                path.file_name().map(|n| n.to_os_string()).unwrap_or_else(|| OsString::new());
+            let fname = path.file_name().map(|n| n.to_os_string()).unwrap_or_else(OsString::new);
 
             let (r_stem, secondary_ext, primary_ext) =
                 split_rstem_ext(&fname, args.secondary_ext_len);
@@ -348,7 +347,7 @@ pub fn truncate_stem(r_stem: OsString, max_stem_bytes: usize, word_boundaries: b
     let r_stem_bytes = r_stem.as_bytes();
     let mut truncated_bytes = &r_stem_bytes[..r_stem_bytes.len().min(max_stem_bytes)];
 
-    while !std::str::from_utf8(truncated_bytes).is_ok() {
+    while std::str::from_utf8(truncated_bytes).is_err() {
         truncated_bytes = &truncated_bytes[..truncated_bytes.len().saturating_sub(1)];
     }
 
@@ -357,7 +356,7 @@ pub fn truncate_stem(r_stem: OsString, max_stem_bytes: usize, word_boundaries: b
     if word_boundaries {
         let truncated_str = truncated.to_string_lossy();
         if let Some(last_space) = truncated_str.rfind(' ') {
-            let space_bytes = truncated_str[..last_space].as_bytes().len();
+            let space_bytes = truncated_str[..last_space].len();
             if space_bytes > max_stem_bytes.saturating_sub(10) {
                 truncated = OsString::from(&truncated_str[..last_space]);
             }
